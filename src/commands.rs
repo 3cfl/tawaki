@@ -262,6 +262,13 @@ pub fn remove(_cfg: &Config, names: &[String], yes: bool) -> Result<()> {
     Ok(())
 }
 
+fn release_version() -> Option<String> {
+    let text = std::fs::read_to_string("/usr/lib/os-release").ok()?;
+    text.lines()
+        .find_map(|l| l.strip_prefix("VERSION_ID="))
+        .map(|v| v.trim_matches('"').to_string())
+}
+
 pub fn update(cfg: &Config, yes: bool) -> Result<()> {
     ui::info("Checking for updates...");
     let (p, a, f) = std::thread::scope(|s| {
@@ -290,9 +297,21 @@ pub fn update(cfg: &Config, yes: bool) -> Result<()> {
         bail!("cancelled");
     }
     pacman::clear_stale_lock()?;
+    let before = release_version();
     if p != Some(0) {
         ui::info("Updating pacman packages...");
         pacman::update(true)?;
+    }
+    let after = release_version();
+    if let Some(new) = after.as_ref().filter(|n| before.as_ref() != Some(*n)) {
+        let line = match &before {
+            Some(old) => format!("Fiordland {old} -> {new}"),
+            None => format!("Fiordland is now {new}"),
+        };
+        ui::info(&ui::green(&line));
+        if let Ok(news) = std::fs::read_to_string(format!("/usr/share/fiordland/news/{new}.txt")) {
+            println!("{}", news.trim_end());
+        }
     }
     if a.is_some_and(|n| n > 0) {
         ui::info("Updating AUR packages...");
