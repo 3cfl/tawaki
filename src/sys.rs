@@ -46,7 +46,9 @@ where
     if let Some(d) = dir {
         c.current_dir(d);
     }
-    let status = c.status().with_context(|| format!("couldn't start {cmd}"))?;
+    let status = c
+        .status()
+        .with_context(|| format!("couldn't start {cmd}"))?;
     if !status.success() {
         bail!("{cmd} failed ({status})");
     }

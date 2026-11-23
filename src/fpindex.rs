@@ -77,9 +77,21 @@ fn fetch_catalogue() {
         return;
     }
     eprintln!("  fetching the Flathub catalogue (first run only)…");
-    crate::sys::succeeds("flatpak", ["update", "--appstream", "--system", "--noninteractive"]);
+    crate::sys::succeeds(
+        "flatpak",
+        ["update", "--appstream", "--system", "--noninteractive"],
+    );
     if sources().is_empty() {
-        crate::sys::succeeds("sudo", ["flatpak", "update", "--appstream", "--system", "--noninteractive"]);
+        crate::sys::succeeds(
+            "sudo",
+            [
+                "flatpak",
+                "update",
+                "--appstream",
+                "--system",
+                "--noninteractive",
+            ],
+        );
     }
 }
 
@@ -103,7 +115,9 @@ pub fn load() -> Vec<App> {
             .iter()
             .map(|(name, xml, _)| s.spawn(move || parse(xml, name)))
             .collect();
-        hs.into_iter().flat_map(|h| h.join().unwrap_or_default()).collect()
+        hs.into_iter()
+            .flat_map(|h| h.join().unwrap_or_default())
+            .collect()
     });
     let idx = Index { key, apps };
     let p = cache_path();
@@ -152,18 +166,17 @@ fn parse(path: &Path, remote: &str) -> Vec<App> {
     let mut field = Field::None;
     let mut got_release = false;
 
-    loop {
-        let ev = match reader.read_event_into(&mut buf) {
-            Ok(ev) => ev,
-            Err(_) => break,
-        };
+    while let Ok(ev) = reader.read_event_into(&mut buf) {
         match ev {
             Event::Start(e) => {
                 depth += 1;
                 let tag = e.name();
                 let tag = tag.as_ref();
                 if tag == b"component" {
-                    cur = Some(App { remote: remote.to_string(), ..Default::default() });
+                    cur = Some(App {
+                        remote: remote.to_string(),
+                        ..Default::default()
+                    });
                     bundle.clear();
                     comp_depth = depth;
                     got_release = false;
@@ -174,7 +187,10 @@ fn parse(path: &Path, remote: &str) -> Vec<App> {
                         b"name" if top && !has_lang(&e) => Field::Name,
                         b"summary" if top && !has_lang(&e) => Field::Summary,
                         b"bundle" if top => Field::Bundle,
-                        b"value" if attr(&e, "key").as_deref() == Some("flathub::verification::verified") => {
+                        b"value"
+                            if attr(&e, "key").as_deref()
+                                == Some("flathub::verification::verified") =>
+                        {
                             Field::Verified
                         }
                         b"release" if !got_release => {

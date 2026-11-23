@@ -89,7 +89,16 @@ fn ensure_remote(cfg: &Config, remote: &str) {
     if remote != "flathub" || !matches!(cfg.flatpak_scope, FlatpakScope::User) {
         return;
     }
-    sys::succeeds("flatpak", ["remote-add", "--user", "--if-not-exists", "flathub", "https://dl.flathub.org/repo/flathub.flatpakrepo"]);
+    sys::succeeds(
+        "flatpak",
+        [
+            "remote-add",
+            "--user",
+            "--if-not-exists",
+            "flathub",
+            "https://dl.flathub.org/repo/flathub.flatpakrepo",
+        ],
+    );
 }
 
 pub fn install(cfg: &Config, remote: &str, ids: &[String], yes: bool) -> Result<()> {
@@ -168,6 +177,17 @@ pub fn missing_runtime(cfg: &Config, remote: &str, id: &str) -> Option<(String, 
     if sys::succeeds("flatpak", ["info", &format!("{name}//{branch}")]) {
         return None;
     }
-    let rinfo = sys::output("flatpak", ["remote-info", scope_flag(cfg), remote, &format!("runtime/{rt}")])?;
-    Some((format!("{name} {branch}"), bytes(&field(&rinfo, "Download Size")?)))
+    let rinfo = sys::output(
+        "flatpak",
+        [
+            "remote-info",
+            scope_flag(cfg),
+            remote,
+            &format!("runtime/{rt}"),
+        ],
+    )?;
+    Some((
+        format!("{name} {branch}"),
+        bytes(&field(&rinfo, "Download Size")?),
+    ))
 }

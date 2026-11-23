@@ -15,7 +15,11 @@ fn lookup(cfg: &Config, src: Source, name: &str) -> Option<Candidate> {
     }
 }
 
-fn resolve_all(cfg: &Config, names: &[String], order: &[Source]) -> Vec<Vec<(Source, Option<Candidate>)>> {
+fn resolve_all(
+    cfg: &Config,
+    names: &[String],
+    order: &[Source],
+) -> Vec<Vec<(Source, Option<Candidate>)>> {
     std::thread::scope(|s| {
         let jobs: Vec<Vec<_>> = names
             .iter()
@@ -27,7 +31,11 @@ fn resolve_all(cfg: &Config, names: &[String], order: &[Source]) -> Vec<Vec<(Sou
             })
             .collect();
         jobs.into_iter()
-            .map(|hs| hs.into_iter().map(|h| h.join().expect("lookup thread")).collect())
+            .map(|hs| {
+                hs.into_iter()
+                    .map(|h| h.join().expect("lookup thread"))
+                    .collect()
+            })
             .collect()
     })
 }
@@ -57,7 +65,10 @@ fn pick(cfg: &Config, hits: Vec<Candidate>) -> Option<(Candidate, String)> {
     if first.source != Source::Flatpak {
         return Some((first, String::new()));
     }
-    let remote = first.repo.clone().unwrap_or_else(|| cfg.flatpak_remote.clone());
+    let remote = first
+        .repo
+        .clone()
+        .unwrap_or_else(|| cfg.flatpak_remote.clone());
     let Some((rt, size)) = flatpak::missing_runtime(cfg, &remote, &first.id) else {
         return Some((first, String::new()));
     };
@@ -75,7 +86,14 @@ pub fn install(cfg: &Config, names: &[String], from: Option<Source>, yes: bool) 
         Some(s) => vec![s],
         None => cfg.priority.clone(),
     };
-    ui::info(&format!("Searching {}...", order.iter().map(|s| s.label()).collect::<Vec<_>>().join(", ")));
+    ui::info(&format!(
+        "Searching {}...",
+        order
+            .iter()
+            .map(|s| s.label())
+            .collect::<Vec<_>>()
+            .join(", ")
+    ));
     let results = resolve_all(cfg, names, &order);
     let width = names.iter().map(|n| n.len()).max().unwrap_or(0);
 
@@ -85,19 +103,32 @@ pub fn install(cfg: &Config, names: &[String], from: Option<Source>, yes: bool) 
         let marks: Vec<String> = found
             .iter()
             .map(|(src, c)| {
-                let mark = if c.is_some() { ui::green("✓") } else { ui::red("✗") };
+                let mark = if c.is_some() {
+                    ui::green("✓")
+                } else {
+                    ui::red("✗")
+                };
                 format!("{} {mark}", ui::dim(src.label()))
             })
             .collect();
         let hits: Vec<Candidate> = found.into_iter().filter_map(|(_, c)| c).collect();
         let line = format!("  {:width$}  {}", name, marks.join("  "));
         if let Some(already) = hits.iter().find(|c| c.installed) {
-            println!("{line}  {} already installed via {}", ui::dim("→"), already.source.label());
+            println!(
+                "{line}  {} already installed via {}",
+                ui::dim("→"),
+                already.source.label()
+            );
             continue;
         }
         match pick(cfg, hits) {
             Some((c, note)) => {
-                println!("{line}  {} {} {}{note}", ui::bold("→"), ui::source_tag(c.source), describe(&c));
+                println!(
+                    "{line}  {} {} {}{note}",
+                    ui::bold("→"),
+                    ui::source_tag(c.source),
+                    describe(&c)
+                );
                 plan.push((name.clone(), c));
             }
             None => {
@@ -126,7 +157,10 @@ pub fn install(cfg: &Config, names: &[String], from: Option<Source>, yes: bool) 
     for (name, c) in plan {
         let key = match c.source {
             Source::Pacman => (0, String::new()),
-            Source::Flatpak => (1, c.repo.clone().unwrap_or_else(|| cfg.flatpak_remote.clone())),
+            Source::Flatpak => (
+                1,
+                c.repo.clone().unwrap_or_else(|| cfg.flatpak_remote.clone()),
+            ),
             Source::Aur => (2, String::new()),
         };
         by_src.entry(key).or_default().push((name, c));
@@ -142,7 +176,13 @@ pub fn install(cfg: &Config, names: &[String], from: Option<Source>, yes: bool) 
             _ => aur::install(cfg, &ids, yes)?,
         }
         for (name, c) in group {
-            state.packages.insert(name, Entry { source: c.source, id: c.id });
+            state.packages.insert(
+                name,
+                Entry {
+                    source: c.source,
+                    id: c.id,
+                },
+            );
         }
         state.save()?;
     }
@@ -159,10 +199,26 @@ pub fn remove(_cfg: &Config, names: &[String], yes: bool) -> Result<()> {
         if let Some((key, entry)) = state.find(name) {
             targets.push((Some(key), entry));
         } else if pacman::is_installed(name) {
-            let source = if foreign.contains(name) { Source::Aur } else { Source::Pacman };
-            targets.push((None, Entry { source, id: name.clone() }));
+            let source = if foreign.contains(name) {
+                Source::Aur
+            } else {
+                Source::Pacman
+            };
+            targets.push((
+                None,
+                Entry {
+                    source,
+                    id: name.clone(),
+                },
+            ));
         } else if let Some(id) = flatpak::find_installed(name) {
-            targets.push((None, Entry { source: Source::Flatpak, id }));
+            targets.push((
+                None,
+                Entry {
+                    source: Source::Flatpak,
+                    id,
+                },
+            ));
         } else {
             missing.push(name.clone());
         }
@@ -281,7 +337,9 @@ pub fn search(cfg: &Config, query: &[String], from: Option<Source>) -> Result<()
                 })
             })
             .collect();
-        hs.into_iter().map(|h| h.join().expect("search thread")).collect()
+        hs.into_iter()
+            .map(|h| h.join().expect("search thread"))
+            .collect()
     });
 
     let mut any = false;
@@ -306,7 +364,10 @@ pub fn search(cfg: &Config, query: &[String], from: Option<Source>) -> Result<()
             }
         }
         if extra > 0 {
-            println!("    {}", ui::dim(&format!("... and {extra} more from {}", src.label())));
+            println!(
+                "    {}",
+                ui::dim(&format!("... and {extra} more from {}", src.label()))
+            );
         }
     }
     if !any {
@@ -322,7 +383,11 @@ pub fn list(from: Option<Source>) -> Result<()> {
         if from.is_some_and(|f| f != e.source) {
             continue;
         }
-        let id = if &e.id != name { ui::dim(&format!(" ({})", e.id)) } else { String::new() };
+        let id = if &e.id != name {
+            ui::dim(&format!(" ({})", e.id))
+        } else {
+            String::new()
+        };
         println!("{} {}{id}", ui::source_tag(e.source), ui::bold(name));
         shown += 1;
     }

@@ -13,7 +13,11 @@ use clap::{Parser, Subcommand};
 use source::Source;
 
 #[derive(Parser)]
-#[command(name = "tawaki", version, about = "The Fiordland Linux package manager")]
+#[command(
+    name = "tawaki",
+    version,
+    about = "The Fiordland Linux package manager"
+)]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -21,7 +25,10 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    #[command(visible_alias = "i", about = "Install packages from the cleanest available source")]
+    #[command(
+        visible_alias = "i",
+        about = "Install packages from the cleanest available source"
+    )]
     Install {
         #[arg(required = true)]
         names: Vec<String>,

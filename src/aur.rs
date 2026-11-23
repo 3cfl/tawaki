@@ -51,7 +51,16 @@ fn get(url: &str, query: &[(&str, &str)]) -> Option<Resp> {
 const SEARCH_TTL: u64 = 1800;
 
 fn search_cache(key: &str) -> PathBuf {
-    let safe: String = key.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '_' }).collect();
+    let safe: String = key
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
     dirs::cache_dir()
         .unwrap_or_else(|| PathBuf::from("/tmp"))
         .join("tawaki")
@@ -67,11 +76,17 @@ fn cached_search(term: &str) -> Option<Resp> {
         .and_then(|t| t.elapsed().ok())
         .is_some_and(|age| age.as_secs() < SEARCH_TTL);
     if fresh {
-        if let Some(r) = std::fs::read(&path).ok().and_then(|b| serde_json::from_slice::<Resp>(&b).ok()) {
+        if let Some(r) = std::fs::read(&path)
+            .ok()
+            .and_then(|b| serde_json::from_slice::<Resp>(&b).ok())
+        {
             return Some(r);
         }
     }
-    let r = get(&format!("{RPC}/search/{}", encode(term)), &[("by", "name-desc")])?;
+    let r = get(
+        &format!("{RPC}/search/{}", encode(term)),
+        &[("by", "name-desc")],
+    )?;
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
@@ -92,12 +107,18 @@ fn to_candidate(p: &Pkg, installed: bool) -> Candidate {
         verified: false,
         installed,
         prebuilt: p.name.ends_with("-bin")
-            || p.make_depends.as_ref().map_or(true, |m| m.iter().all(|d| d.starts_with("git"))),
+            || p.make_depends
+                .as_ref()
+                .is_none_or(|m| m.iter().all(|d| d.starts_with("git"))),
     }
 }
 
 pub fn lookup(name: &str) -> Option<Candidate> {
-    let wanted = [format!("{name}-bin"), name.to_string(), format!("{name}-git")];
+    let wanted = [
+        format!("{name}-bin"),
+        name.to_string(),
+        format!("{name}-git"),
+    ];
     let q: Vec<(&str, &str)> = wanted.iter().map(|w| ("arg[]", w.as_str())).collect();
     let resp = get(&format!("{RPC}/info"), &q)?;
     let find = |fresh_only: bool| {
@@ -168,7 +189,11 @@ fn build_dir(name: &str) -> PathBuf {
 fn build_one(name: &str, yes: bool) -> Result<()> {
     let dir = build_dir(name);
     if dir.join(".git").is_dir() {
-        sys::run("git", ["-C", &dir.to_string_lossy(), "pull", "--ff-only", "-q"], None)?;
+        sys::run(
+            "git",
+            ["-C", &dir.to_string_lossy(), "pull", "--ff-only", "-q"],
+            None,
+        )?;
     } else {
         std::fs::create_dir_all(dir.parent().context("bad cache path")?)?;
         let url = format!("https://aur.archlinux.org/{name}.git");
@@ -197,7 +222,9 @@ pub fn install(cfg: &Config, names: &[String], yes: bool) -> Result<()> {
         args.extend(names.iter().cloned());
         return sys::run(h, &args, None);
     }
-    ui::warn("no AUR helper found, building with makepkg (AUR-only dependencies won't be resolved)");
+    ui::warn(
+        "no AUR helper found, building with makepkg (AUR-only dependencies won't be resolved)",
+    );
     for n in names {
         build_one(n, yes)?;
     }
