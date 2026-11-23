@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh the Flathub catalogue for tawaki
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/usr/bin/flatpak
+
+[Service]
+Type=oneshot
+Nice=19
+IOSchedulingClass=idle
+ExecStart=/usr/bin/flatpak remote-add --system --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+ExecStart=/usr/bin/flatpak update --appstream --system --noninteractive

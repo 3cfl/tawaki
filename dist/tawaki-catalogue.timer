@@ -1,0 +1,10 @@
+[Unit]
+Description=Refresh the Flathub catalogue for tawaki daily
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1d
+Persistent=true
+
+[Install]
+WantedBy=timers.target
