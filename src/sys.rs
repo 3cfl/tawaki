@@ -60,8 +60,3 @@ pub fn has(bin: &str) -> bool {
         .map(|p| std::env::split_paths(&p).any(|d| d.join(bin).is_file()))
         .unwrap_or(false)
 }
-
-pub fn count_lines(s: Option<String>) -> usize {
-    s.map(|o| o.lines().filter(|l| !l.trim().is_empty()).count())
-        .unwrap_or(0)
-}

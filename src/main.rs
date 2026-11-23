@@ -49,6 +49,11 @@ enum Cmd {
         #[arg(short, long, help = "Don't ask for confirmation")]
         yes: bool,
     },
+    #[command(about = "List pending updates without installing them")]
+    Check {
+        #[arg(long, help = "Print machine-readable JSON")]
+        json: bool,
+    },
     #[command(visible_alias = "s", about = "Search every source at once")]
     Search {
         #[arg(required = true)]
@@ -76,6 +81,7 @@ fn main() {
         Cmd::Install { names, from, yes } => commands::install(&cfg, &names, from, yes),
         Cmd::Remove { names, yes } => commands::remove(&cfg, &names, yes),
         Cmd::Update { yes } => commands::update(&cfg, yes),
+        Cmd::Check { json } => commands::check(&cfg, json),
         Cmd::Search { query, from } => commands::search(&cfg, &query, from),
         Cmd::List { from } => commands::list(from),
     };

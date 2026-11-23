@@ -39,3 +39,26 @@ pub fn norm(s: &str) -> String {
         .flat_map(|c| c.to_lowercase())
         .collect()
 }
+
+#[derive(serde::Serialize, Clone, Debug)]
+pub struct Outdated {
+    pub name: String,
+    pub old: String,
+    pub new: String,
+}
+
+pub fn parse_arrows(out: Option<String>) -> Vec<Outdated> {
+    out.unwrap_or_default()
+        .lines()
+        .filter_map(|l| {
+            let mut it = l.split_whitespace();
+            let name = it.next()?.to_string();
+            let old = it.next()?.to_string();
+            if it.next()? != "->" {
+                return None;
+            }
+            let new = it.next()?.to_string();
+            Some(Outdated { name, old, new })
+        })
+        .collect()
+}

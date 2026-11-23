@@ -1,4 +1,4 @@
-use crate::source::{Candidate, Source};
+use crate::source::{parse_arrows, Candidate, Outdated, Source};
 use crate::sys;
 use anyhow::Result;
 use std::collections::HashSet;
@@ -131,11 +131,42 @@ pub fn remove(names: &[String], yes: bool) -> Result<()> {
     sys::run("sudo", &args, None)
 }
 
-pub fn pending_updates() -> Option<usize> {
+pub fn outdated() -> Option<Vec<Outdated>> {
     if !sys::has("checkupdates") {
         return None;
     }
-    Some(sys::count_lines(sys::output("checkupdates", ["--nocolor"])))
+    let out = std::process::Command::new("checkupdates")
+        .arg("--nocolor")
+        .env("LC_ALL", "C")
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    match out.status.code() {
+        Some(0) => Some(parse_arrows(Some(
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+        ))),
+        Some(2) => Some(vec![]),
+        _ => None,
+    }
+}
+
+pub fn vercmp(a: &str, b: &str) -> std::cmp::Ordering {
+    sys::output("vercmp", [a, b])
+        .and_then(|o| o.trim().parse::<i32>().ok())
+        .map(|n| n.cmp(&0))
+        .unwrap_or(std::cmp::Ordering::Equal)
+}
+
+pub fn foreign_versions() -> Vec<(String, String)> {
+    sys::output("pacman", ["-Qm"])
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| {
+            let (n, v) = l.split_once(' ')?;
+            Some((n.to_string(), v.trim().to_string()))
+        })
+        .collect()
 }
 
 pub fn update(yes: bool) -> Result<()> {

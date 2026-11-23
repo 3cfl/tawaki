@@ -1,5 +1,5 @@
 use crate::config::{Config, FlatpakScope};
-use crate::source::{norm, Candidate, Source};
+use crate::source::{norm, Candidate, Outdated, Source};
 use crate::{fpindex, sys};
 use anyhow::Result;
 use std::collections::HashSet;
@@ -132,14 +132,38 @@ pub fn find_installed(name: &str) -> Option<String> {
     })
 }
 
-pub fn pending_updates() -> Option<usize> {
+pub fn outdated() -> Option<Vec<Outdated>> {
     if !available() {
         return None;
     }
-    Some(sys::count_lines(sys::output(
+    let installed: std::collections::HashMap<String, String> =
+        sys::output("flatpak", ["list", "--columns=application,version"])
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|l| {
+                let (id, v) = l.split_once('\t')?;
+                Some((id.trim().to_string(), v.trim().to_string()))
+            })
+            .collect();
+    let out = sys::output(
         "flatpak",
-        ["remote-ls", "--updates", "--columns=application"],
-    )))
+        ["remote-ls", "--updates", "--columns=application,version"],
+    )?;
+    let mut seen = std::collections::HashSet::new();
+    Some(
+        out.lines()
+            .filter_map(|l| {
+                let mut it = l.split('\t');
+                let id = it.next()?.trim().to_string();
+                if id.is_empty() || !seen.insert(id.clone()) {
+                    return None;
+                }
+                let new = it.next().unwrap_or("").trim().to_string();
+                let old = installed.get(&id).cloned().unwrap_or_default();
+                Some(Outdated { name: id, old, new })
+            })
+            .collect(),
+    )
 }
 
 pub fn update(yes: bool) -> Result<()> {

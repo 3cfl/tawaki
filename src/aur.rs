@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::pacman;
-use crate::source::{Candidate, Source};
+use crate::source::{parse_arrows, Candidate, Outdated, Source};
 use crate::{sys, ui};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -231,14 +231,44 @@ pub fn install(cfg: &Config, names: &[String], yes: bool) -> Result<()> {
     Ok(())
 }
 
-pub fn pending_updates(cfg: &Config) -> Option<usize> {
-    let h = helper(cfg)?;
-    Some(sys::count_lines(sys::output(h, ["-Qua"])))
+pub fn outdated(cfg: &Config) -> Option<Vec<Outdated>> {
+    if let Some(h) = helper(cfg) {
+        let out = sys::output(h, ["-Qua"]).or_else(|| Some(String::new()));
+        return Some(parse_arrows(out));
+    }
+    if cfg.aur_helper == "none" {
+        return Some(vec![]);
+    }
+    let local = pacman::foreign_versions();
+    if local.is_empty() {
+        return Some(vec![]);
+    }
+    let mut found = Vec::new();
+    for chunk in local.chunks(150) {
+        let q: Vec<(&str, &str)> = chunk.iter().map(|(n, _)| ("arg[]", n.as_str())).collect();
+        let resp = get(&format!("{RPC}/info"), &q)?;
+        for p in resp.results {
+            let Some((_, old)) = chunk.iter().find(|(n, _)| *n == p.name) else {
+                continue;
+            };
+            if pacman::vercmp(&p.version, old) == std::cmp::Ordering::Greater {
+                found.push(Outdated {
+                    name: p.name.clone(),
+                    old: old.clone(),
+                    new: p.version.clone(),
+                });
+            }
+        }
+    }
+    Some(found)
 }
 
 pub fn update(cfg: &Config, yes: bool) -> Result<()> {
     let Some(h) = helper(cfg) else {
-        ui::warn("no AUR helper found, skipping AUR updates");
+        for o in outdated(cfg).unwrap_or_default() {
+            ui::info(&format!("Building {} {}", o.name, o.new));
+            build_one(&o.name, yes)?;
+        }
         return Ok(());
     };
     let mut args = vec!["-Sua"];

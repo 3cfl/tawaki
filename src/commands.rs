@@ -1,5 +1,5 @@
 use crate::config::Config;
-use crate::source::{norm, Candidate, Source};
+use crate::source::{norm, Candidate, Outdated, Source};
 use crate::state::{Entry, State};
 use crate::{aur, flatpak, pacman, ui};
 use anyhow::{bail, Result};
@@ -269,27 +269,79 @@ fn release_version() -> Option<String> {
         .map(|v| v.trim_matches('"').to_string())
 }
 
-pub fn update(cfg: &Config, yes: bool) -> Result<()> {
-    ui::info("Checking for updates...");
-    let (p, a, f) = std::thread::scope(|s| {
-        let p = s.spawn(pacman::pending_updates);
-        let a = s.spawn(|| aur::pending_updates(cfg));
-        let f = s.spawn(flatpak::pending_updates);
+#[derive(serde::Serialize)]
+pub struct Pending {
+    pub release: Option<String>,
+    pub pacman: Option<Vec<Outdated>>,
+    pub aur: Option<Vec<Outdated>>,
+    pub flatpak: Option<Vec<Outdated>>,
+}
+
+impl Pending {
+    fn total(&self) -> usize {
+        [&self.pacman, &self.aur, &self.flatpak]
+            .iter()
+            .map(|l| l.as_ref().map_or(0, Vec::len))
+            .sum()
+    }
+}
+
+pub fn pending(cfg: &Config) -> Pending {
+    let (pacman, aur, flatpak) = std::thread::scope(|s| {
+        let p = s.spawn(pacman::outdated);
+        let a = s.spawn(|| aur::outdated(cfg));
+        let f = s.spawn(flatpak::outdated);
         (p.join().unwrap(), a.join().unwrap(), f.join().unwrap())
     });
-    let show = |label: &str, n: Option<usize>| {
-        let v = match n {
+    Pending {
+        release: release_version(),
+        pacman,
+        aur,
+        flatpak: if flatpak::available() {
+            flatpak
+        } else {
+            Some(vec![])
+        },
+    }
+}
+
+fn show_pending(p: &Pending, list: bool) {
+    let show = |label: &str, l: &Option<Vec<Outdated>>| {
+        let v = match l.as_ref().map(Vec::len) {
             Some(0) => ui::dim("up to date"),
             Some(n) => ui::yellow(&format!("{n} update{}", if n == 1 { "" } else { "s" })),
-            None => ui::dim("unknown"),
+            None => ui::dim("couldn't check"),
         };
         println!("  {:8} {v}", label);
+        if list {
+            for o in l.iter().flatten() {
+                println!("    {} {} -> {}", o.name, ui::dim(&o.old), o.new);
+            }
+        }
     };
-    show("pacman", p);
-    show("aur", a);
-    show("flatpak", if flatpak::available() { f } else { Some(0) });
+    show("pacman", &p.pacman);
+    show("aur", &p.aur);
+    show("flatpak", &p.flatpak);
+}
 
-    if [p, a, f].iter().all(|n| matches!(n, Some(0) | None)) && p.is_some() {
+pub fn check(cfg: &Config, json: bool) -> Result<()> {
+    let p = pending(cfg);
+    if json {
+        println!("{}", serde_json::to_string(&p)?);
+    } else {
+        show_pending(&p, true);
+    }
+    Ok(())
+}
+
+pub fn update(cfg: &Config, yes: bool) -> Result<()> {
+    ui::info("Checking for updates...");
+    let pend = pending(cfg);
+    show_pending(&pend, false);
+    let count = |l: &Option<Vec<Outdated>>| l.as_ref().map(Vec::len);
+    let (p, a, f) = (count(&pend.pacman), count(&pend.aur), count(&pend.flatpak));
+
+    if pend.total() == 0 && p.is_some() {
         ui::info(&ui::green("Everything is up to date."));
         return Ok(());
     }
