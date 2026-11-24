@@ -158,7 +158,10 @@ pub fn outdated() -> Option<Vec<Outdated>> {
                 if id.is_empty() || !seen.insert(id.clone()) {
                     return None;
                 }
-                let new = it.next().unwrap_or("").trim().to_string();
+                let new = match it.next().unwrap_or("").trim() {
+                    "" => "latest".to_string(),
+                    v => v.to_string(),
+                };
                 let old = installed.get(&id).cloned().unwrap_or_default();
                 Some(Outdated { name: id, old, new })
             })
