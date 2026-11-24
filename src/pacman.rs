@@ -173,7 +173,25 @@ pub fn foreign_versions() -> Vec<(String, String)> {
         .collect()
 }
 
+fn bad_sigs() -> Vec<String> {
+    std::fs::read_dir("/var/lib/pacman/sync")
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "sig"))
+        .filter(|p| std::fs::read(p).is_ok_and(|b| b.first() == Some(&b'<')))
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect()
+}
+
 pub fn update(yes: bool) -> Result<()> {
+    let bad = bad_sigs();
+    if !bad.is_empty() {
+        let mut rm = vec!["rm", "-f", "--"];
+        rm.extend(bad.iter().map(String::as_str));
+        sys::run("sudo", rm, None)?;
+    }
     let mut args = vec!["pacman", "-Syu"];
     if yes {
         args.push("--noconfirm");
