@@ -1,6 +1,6 @@
 # tawaki
 
-The package manager for [Fiordland Linux](https://fiordland.apollo44.lat). One command that installs from the cleanest source: pacman, then Flathub, then the AUR. All sources are looked up in parallel.
+The package manager for [Fiordland Linux](https://fiordlandlinux.org). One command that installs from the cleanest source: pacman, then Flathub, then the AUR. All sources are looked up in parallel.
 
 Works on any Arch-based system.
 
