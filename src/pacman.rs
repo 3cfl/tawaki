@@ -118,6 +118,8 @@ pub fn install(names: &[String], yes: bool) -> Result<()> {
     if yes {
         args.push("--noconfirm".into());
     }
+    check_names(names, true)?;
+    args.push("--".into());
     args.extend(names.iter().cloned());
     sys::run("sudo", &args, None)
 }
@@ -127,6 +129,8 @@ pub fn remove(names: &[String], yes: bool) -> Result<()> {
     if yes {
         args.push("--noconfirm".into());
     }
+    check_names(names, true)?;
+    args.push("--".into());
     args.extend(names.iter().cloned());
     sys::run("sudo", &args, None)
 }
@@ -175,4 +179,27 @@ pub fn update(yes: bool) -> Result<()> {
         args.push("--noconfirm");
     }
     sys::run("sudo", args, None)
+}
+
+pub fn valid_name(name: &str, allow_repo: bool) -> bool {
+    let pkg = match name.split_once('/') {
+        Some((repo, pkg)) if allow_repo => {
+            if repo.is_empty() || !repo.chars().all(|c| c.is_ascii_alphanumeric() || "-_".contains(c)) {
+                return false;
+            }
+            pkg
+        }
+        Some(_) => return false,
+        None => name,
+    };
+    !pkg.is_empty()
+        && !pkg.starts_with(['-', '.'])
+        && pkg.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "@._+-".contains(c))
+}
+
+fn check_names(names: &[String], allow_repo: bool) -> Result<()> {
+    if let Some(bad) = names.iter().find(|n| !valid_name(n, allow_repo)) {
+        anyhow::bail!("invalid package name: {bad}");
+    }
+    Ok(())
 }

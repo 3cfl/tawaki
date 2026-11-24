@@ -187,6 +187,9 @@ fn build_dir(name: &str) -> PathBuf {
 }
 
 fn build_one(name: &str, yes: bool) -> Result<()> {
+    if !pacman::valid_name(name, false) {
+        anyhow::bail!("invalid package name: {name}");
+    }
     let dir = build_dir(name);
     if dir.join(".git").is_dir() {
         sys::run(
@@ -199,7 +202,7 @@ fn build_one(name: &str, yes: bool) -> Result<()> {
         let url = format!("https://aur.archlinux.org/{name}.git");
         sys::run("git", ["clone", "-q", &url, &dir.to_string_lossy()], None)?;
     }
-    if !yes && ui::confirm(&format!("Review PKGBUILD for {name}?"), false) {
+    if !yes && ui::confirm(&format!("Review PKGBUILD for {name}?"), true) {
         let pager = std::env::var("PAGER").unwrap_or_else(|_| "less".into());
         let _ = sys::run(&pager, [dir.join("PKGBUILD")], None);
         if !ui::confirm(&format!("Build and install {name}?"), true) {
