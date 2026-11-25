@@ -20,7 +20,7 @@ impl Source {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct Candidate {
     pub source: Source,
     pub id: String,
@@ -61,4 +61,25 @@ pub fn parse_arrows(out: Option<String>) -> Vec<Outdated> {
             Some(Outdated { name, old, new })
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn arrows_parsing() {
+        let out = "firefox 1.0-1 -> 1.1-1\nbroken line\nvim 9.0 9.1\n\nzsh 5.8-1 -> 5.9-1\n";
+        let r = parse_arrows(Some(out.into()));
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0].name, "firefox");
+        assert_eq!(r[1].new, "5.9-1");
+        assert!(parse_arrows(None).is_empty());
+    }
+
+    #[test]
+    fn norm_strips_punctuation() {
+        assert_eq!(norm("OBS-Studio"), "obsstudio");
+        assert_eq!(norm("--"), "");
+    }
 }
