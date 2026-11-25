@@ -13,7 +13,11 @@ tawaki update               u, up
 tawaki search obs           s
 tawaki list                 ls
 tawaki install foo --from aur
+tawaki search obs --json      machine-readable output (also list, check)
+tawaki completions bash       shell completions (bash, zsh, fish, elvish, powershell)
 ```
+
+AUR answers are cached for a couple of minutes, and every package name goes to the AUR in one batched request.
 
 If the top pick is a Flatpak that would pull a big runtime you don't have yet, tawaki takes a prebuilt pacman or AUR package instead and tells you how much it skipped. The Flathub catalogue refreshes in the background (`dist/tawaki-catalogue.timer`), so searches never wait on it.
 

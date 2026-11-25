@@ -1,6 +1,6 @@
 [package]
 name = "tawaki"
-version = "0.2.3"
+version = "1.0.0"
 edition = "2021"
 description = "The Fiordland Linux package manager"
 license = "MIT"
@@ -8,6 +8,7 @@ license = "MIT"
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
+clap_complete = "4.6.9"
 dirs = "5"
 quick-xml = "0.37"
 serde = { version = "1", features = ["derive"] }
