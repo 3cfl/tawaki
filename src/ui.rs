@@ -15,6 +15,30 @@ fn paint(code: &str, s: &str) -> String {
     }
 }
 
+pub fn clean(s: &str) -> String {
+    s.chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .filter(|c| {
+            !matches!(
+                c,
+                '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'
+            )
+        })
+        .collect()
+}
+
+pub fn clean_block(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            if c.is_control() && c != '\n' && c != '\t' {
+                ' '
+            } else {
+                c
+            }
+        })
+        .collect()
+}
+
 pub fn bold(s: &str) -> String {
     paint("1", s)
 }
@@ -60,17 +84,56 @@ pub fn error(msg: &str) {
     eprintln!("{} {msg}", red("error:"));
 }
 
+pub fn answer(line: Option<&str>, default_yes: bool) -> bool {
+    let Some(line) = line else {
+        return false;
+    };
+    match line.trim().to_lowercase().as_str() {
+        "" => default_yes,
+        "y" | "yes" => true,
+        _ => false,
+    }
+}
+
 pub fn confirm(prompt: &str, default_yes: bool) -> bool {
     let hint = if default_yes { "[Y/n]" } else { "[y/N]" };
     print!("{} {prompt} {hint} ", cyan("::"));
     let _ = std::io::stdout().flush();
     let mut line = String::new();
-    if std::io::stdin().read_line(&mut line).is_err() {
-        return default_yes;
+    let got = match std::io::stdin().read_line(&mut line) {
+        Ok(0) | Err(_) => {
+            println!();
+            None
+        }
+        Ok(_) => Some(line.as_str()),
+    };
+    answer(got, default_yes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clean_strips_terminal_escapes() {
+        assert_eq!(clean("a\x1b]52;c;ZXZpbA==\x07b"), "a ]52;c;ZXZpbA== b");
+        assert!(!clean("x\x1b[2Jy\r\n\t").contains(['\x1b', '\r', '\n', '\t']));
+        assert_eq!(clean("plain text ✔"), "plain text ✔");
+        assert_eq!(clean("a\u{202e}b\u{200b}c"), "abc");
     }
-    match line.trim().to_lowercase().as_str() {
-        "" => default_yes,
-        "y" | "yes" => true,
-        _ => false,
+
+    #[test]
+    fn clean_block_keeps_layout_only() {
+        assert_eq!(clean_block("a\x1b[2Jb\r\nc\td"), "a [2Jb \nc\td");
+    }
+
+    #[test]
+    fn eof_never_confirms() {
+        assert!(!answer(None, true));
+        assert!(!answer(None, false));
+        assert!(answer(Some("\n"), true));
+        assert!(!answer(Some("\n"), false));
+        assert!(answer(Some("YES\n"), false));
+        assert!(!answer(Some("nope\n"), true));
     }
 }

@@ -1,9 +1,13 @@
+use crate::{flatpak, fsx};
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+
+const MAX_INDEX: u64 = 128 << 20;
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct App {
@@ -32,7 +36,7 @@ fn roots() -> Vec<PathBuf> {
 
 fn sources() -> Vec<(String, PathBuf, String)> {
     let arch = std::env::consts::ARCH;
-    let mut seen: HashMap<String, ()> = HashMap::new();
+    let mut seen: HashSet<String> = HashSet::new();
     let mut out = vec![];
     for root in roots() {
         let Ok(remotes) = std::fs::read_dir(root.join("appstream")) else {
@@ -42,13 +46,13 @@ fn sources() -> Vec<(String, PathBuf, String)> {
             let name = remote.file_name().to_string_lossy().into_owned();
             let active = remote.path().join(arch).join("active");
             let xml = active.join("appstream.xml");
-            if !xml.is_file() || seen.contains_key(&name) {
+            if !flatpak::valid_remote(&name) || !xml.is_file() || seen.contains(&name) {
                 continue;
             }
             let commit = std::fs::canonicalize(&active)
                 .map(|p| p.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            seen.insert(name.clone(), ());
+            seen.insert(name.clone());
             out.push((name, xml, commit));
         }
     }
@@ -56,14 +60,15 @@ fn sources() -> Vec<(String, PathBuf, String)> {
     out
 }
 
-fn cache_path() -> PathBuf {
-    dirs::cache_dir()
-        .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join("tawaki")
-        .join("flatpak-index.json")
+fn cache_path() -> Option<PathBuf> {
+    fsx::cache_root().ok().map(|d| d.join("flatpak-index.json"))
 }
 
-pub fn installed_ids() -> std::collections::HashSet<String> {
+pub fn sane(a: &App) -> bool {
+    flatpak::valid_id(&a.id) && flatpak::valid_remote(&a.remote)
+}
+
+pub fn installed_ids() -> HashSet<String> {
     roots()
         .into_iter()
         .filter_map(|r| std::fs::read_dir(r.join("app")).ok())
@@ -82,33 +87,33 @@ fn fetch_catalogue() {
         ["update", "--appstream", "--system", "--noninteractive"],
     );
     if sources().is_empty() {
-        crate::sys::succeeds(
-            "sudo",
-            [
-                "flatpak",
-                "update",
-                "--appstream",
-                "--system",
-                "--noninteractive",
-            ],
-        );
+        let args = ["update", "--appstream", "--system", "--noninteractive"];
+        if let Ok(argv) = crate::sys::root_argv("/usr/bin/flatpak", &args, crate::sys::euid()) {
+            crate::sys::succeeds(&argv[0], &argv[1..]);
+        }
     }
 }
 
-pub fn load() -> Vec<App> {
+fn read_cache(path: &Path, key: &[String]) -> Option<Vec<App>> {
+    let idx: Index = serde_json::from_slice(&fsx::read_limited(path, MAX_INDEX)?).ok()?;
+    (idx.key == key).then(|| idx.apps.into_iter().filter(sane).collect())
+}
+
+pub fn load() -> &'static [App] {
+    static APPS: OnceLock<Vec<App>> = OnceLock::new();
+    APPS.get_or_init(build)
+}
+
+fn build() -> Vec<App> {
     let mut srcs = sources();
     if srcs.is_empty() {
         fetch_catalogue();
         srcs = sources();
     }
     let key: Vec<String> = srcs.iter().map(|(n, _, c)| format!("{n}={c}")).collect();
-    if let Some(idx) = std::fs::read(cache_path())
-        .ok()
-        .and_then(|b| serde_json::from_slice::<Index>(&b).ok())
-    {
-        if idx.key == key {
-            return idx.apps;
-        }
+    let path = cache_path();
+    if let Some(apps) = path.as_deref().and_then(|p| read_cache(p, &key)) {
+        return apps;
     }
     let apps: Vec<App> = std::thread::scope(|s| {
         let hs: Vec<_> = srcs
@@ -117,15 +122,12 @@ pub fn load() -> Vec<App> {
             .collect();
         hs.into_iter()
             .flat_map(|h| h.join().unwrap_or_default())
+            .filter(sane)
             .collect()
     });
     let idx = Index { key, apps };
-    let p = cache_path();
-    if let Some(dir) = p.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    if let Ok(bytes) = serde_json::to_vec(&idx) {
-        let _ = std::fs::write(&p, bytes);
+    if let (Some(p), Ok(bytes)) = (path, serde_json::to_vec(&idx)) {
+        let _ = fsx::write_atomic(&p, &bytes);
     }
     idx.apps
 }
@@ -151,7 +153,7 @@ enum Field {
     Bundle,
 }
 
-fn parse(path: &Path, remote: &str) -> Vec<App> {
+pub fn parse(path: &Path, remote: &str) -> Vec<App> {
     let Ok(file) = std::fs::File::open(path) else {
         return vec![];
     };
@@ -250,4 +252,81 @@ fn parse(path: &Path, remote: &str) -> Vec<App> {
         buf.clear();
     }
     apps
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const XML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<components version="0.8" origin="flathub">
+  <component type="desktop-application">
+    <id>org.mozilla.firefox.desktop</id>
+    <name>Firefox</name>
+    <name xml:lang="de">Feuerfuchs</name>
+    <summary>Fast, private browser</summary>
+    <releases><release version="133.0" timestamp="1"/><release version="132.0"/></releases>
+    <bundle type="flatpak">app/org.mozilla.firefox/x86_64/stable</bundle>
+    <metadata><value key="flathub::verification::verified">true</value></metadata>
+  </component>
+  <component type="desktop-application">
+    <id>evil</id>
+    <name>Evil</name>
+    <bundle type="flatpak">app/--from=https:/x/x86_64/stable</bundle>
+  </component>
+  <component type="runtime">
+    <id>org.gnome.Platform</id>
+    <bundle type="flatpak">runtime/org.gnome.Platform/x86_64/46</bundle>
+  </component>
+</components>
+"#;
+
+    #[test]
+    fn appstream_parsing_and_sanity_filter() {
+        let d = fsx::test_dir("as");
+        let p = d.join("appstream.xml");
+        std::fs::write(&p, XML).unwrap();
+        let apps = parse(&p, "flathub");
+        assert_eq!(apps.len(), 2);
+        let ff = &apps[0];
+        assert_eq!(ff.id, "org.mozilla.firefox");
+        assert_eq!(ff.name, "Firefox");
+        assert_eq!(ff.version, "133.0");
+        assert!(ff.verified);
+        let sane_apps: Vec<&App> = apps.iter().filter(|a| sane(a)).collect();
+        assert_eq!(sane_apps.len(), 1);
+    }
+
+    #[test]
+    fn poisoned_cache_is_filtered_or_ignored() {
+        let d = fsx::test_dir("idx");
+        let p = d.join("flatpak-index.json");
+        let idx = Index {
+            key: vec!["flathub=/c1".into()],
+            apps: vec![
+                App {
+                    id: "org.a.Good".into(),
+                    remote: "flathub".into(),
+                    ..Default::default()
+                },
+                App {
+                    id: "--from=https://evil.example/x.flatpakref".into(),
+                    remote: "flathub".into(),
+                    ..Default::default()
+                },
+                App {
+                    id: "org.a.Bad".into(),
+                    remote: "--no-deps".into(),
+                    ..Default::default()
+                },
+            ],
+        };
+        fsx::write_atomic(&p, &serde_json::to_vec(&idx).unwrap()).unwrap();
+        let apps = read_cache(&p, &["flathub=/c1".to_string()]).unwrap();
+        assert_eq!(apps.len(), 1);
+        assert_eq!(apps[0].id, "org.a.Good");
+        assert!(read_cache(&p, &["flathub=/c2".to_string()]).is_none());
+        std::fs::write(d.join("junk.json"), b"{not json").unwrap();
+        assert!(read_cache(&d.join("junk.json"), &[]).is_none());
+    }
 }
