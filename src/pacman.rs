@@ -135,24 +135,55 @@ pub fn remove(names: &[String], yes: bool) -> Result<()> {
     sys::run("sudo", &args, None)
 }
 
+pub fn stable() -> bool {
+    std::fs::read_to_string("/etc/fiordland/channel").is_ok_and(|c| c.trim() == "stable")
+}
+
+fn checkup_db() -> std::path::PathBuf {
+    let uid = sys::output("id", ["-u"]).unwrap_or_default();
+    std::env::temp_dir().join(format!("checkup-db-{}", uid.trim()))
+}
+
+fn ahead(db: &std::path::Path, known: &HashSet<String>) -> Vec<Outdated> {
+    let db = db.to_string_lossy();
+    let list = sys::output("pacman", ["--dbpath", &db, "-Sl", "core", "extra", "multilib"]).unwrap_or_default();
+    list.lines()
+        .filter_map(|l| {
+            let mut it = l.split_whitespace();
+            let (_, name, repo) = (it.next()?, it.next()?, it.next()?);
+            let local = l.split_once("[installed: ")?.1.strip_suffix(']')?;
+            (!known.contains(name) && vercmp(local, repo).is_gt()).then(|| Outdated {
+                name: name.to_string(),
+                old: local.to_string(),
+                new: repo.to_string(),
+            })
+        })
+        .collect()
+}
+
 pub fn outdated() -> Option<Vec<Outdated>> {
     if !sys::has("checkupdates") {
         return None;
     }
+    let db = checkup_db();
     let out = std::process::Command::new("checkupdates")
         .arg("--nocolor")
         .env("LC_ALL", "C")
+        .env("CHECKUPDATES_DB", &db)
         .stdin(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .output()
         .ok()?;
-    match out.status.code() {
-        Some(0) => Some(parse_arrows(Some(
-            String::from_utf8_lossy(&out.stdout).into_owned(),
-        ))),
-        Some(2) => Some(vec![]),
-        _ => None,
+    let mut list = match out.status.code() {
+        Some(0) => parse_arrows(Some(String::from_utf8_lossy(&out.stdout).into_owned())),
+        Some(2) => vec![],
+        _ => return None,
+    };
+    if stable() {
+        let known = list.iter().map(|o| o.name.clone()).collect();
+        list.extend(ahead(&db, &known));
     }
+    Some(list)
 }
 
 pub fn vercmp(a: &str, b: &str) -> std::cmp::Ordering {
@@ -192,7 +223,7 @@ pub fn update(yes: bool) -> Result<()> {
         rm.extend(bad.iter().map(String::as_str));
         sys::run("sudo", rm, None)?;
     }
-    let mut args = vec!["pacman", "-Syu"];
+    let mut args = vec!["pacman", if stable() { "-Syuu" } else { "-Syu" }];
     if yes {
         args.push("--noconfirm");
     }
