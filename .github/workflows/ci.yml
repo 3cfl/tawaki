@@ -18,3 +18,63 @@ jobs:
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
       - run: cargo build --locked --release
+  bench:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    container: archlinux:base-devel
+    steps:
+      - run: |
+          set -euo pipefail
+          sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf
+          pacman -Syu --noconfirm --needed git rust hyperfine pacman-contrib flatpak
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git worktree add /tmp/base origin/main
+          cargo build --release --locked --manifest-path /tmp/base/Cargo.toml
+          cargo build --release --locked
+          install -Dm755 /tmp/base/target/release/tawaki /usr/local/bin/tawaki-old
+          install -Dm755 target/release/tawaki /usr/local/bin/tawaki-new
+      - run: |
+          set -euo pipefail
+          flatpak remote-add --system --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak update --appstream --system --noninteractive
+          tawaki-old search firefox > /dev/null || true
+          tawaki-new search firefox > /dev/null || true
+      - run: |
+          set -euo pipefail
+          for v in old new; do
+            echo "== tawaki-$v install (lookup only)"
+            yes n | tawaki-$v install firefox obs-studio paru spotify || true
+            echo "== tawaki-$v search obs"
+            tawaki-$v search obs | head -5 || true
+          done
+          tawaki-new check --json | head -c 2000 || true
+          echo
+          tawaki-new completions bash | head -3
+      - run: |
+          set -euo pipefail
+          hyperfine -i -w 2 -r 10 --export-markdown warm.md \
+            -n 'search old' 'tawaki-old search firefox' \
+            -n 'search new' 'tawaki-new search firefox' \
+            -n 'search pacman old' 'tawaki-old search --from pacman linux' \
+            -n 'search pacman new' 'tawaki-new search --from pacman linux' \
+            -n 'install lookup old' 'yes n | tawaki-old install firefox obs-studio paru spotify' \
+            -n 'install lookup new' 'yes n | tawaki-new install firefox obs-studio paru spotify' \
+            -n 'list old' 'tawaki-old list' \
+            -n 'list new' 'tawaki-new list'
+          hyperfine -i -r 5 --export-markdown cold.md \
+            --prepare 'rm -rf "$HOME/.cache/tawaki"' \
+            -n 'search cold old' 'tawaki-old search firefox' \
+            -n 'search cold new' 'tawaki-new search firefox' \
+            -n 'install lookup cold old' 'yes n | tawaki-old install firefox obs-studio paru spotify' \
+            -n 'install lookup cold new' 'yes n | tawaki-new install firefox obs-studio paru spotify'
+          hyperfine -i -w 1 -r 5 --export-markdown check.md \
+            -n 'check old' 'tawaki-old check --json' \
+            -n 'check new' 'tawaki-new check --json'
+          cat warm.md cold.md check.md | tee -a "$GITHUB_STEP_SUMMARY"
