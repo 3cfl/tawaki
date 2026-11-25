@@ -36,10 +36,16 @@ pub fn private_dir(dir: &Path) -> Result<PathBuf> {
     let meta = std::fs::symlink_metadata(dir)
         .with_context(|| format!("couldn't inspect {}", dir.display()))?;
     if meta.file_type().is_symlink() || !meta.is_dir() {
-        bail!("{} is not a real directory, refusing to use it", dir.display());
+        bail!(
+            "{} is not a real directory, refusing to use it",
+            dir.display()
+        );
     }
     if meta.uid() != crate::sys::euid() {
-        bail!("{} is owned by someone else, refusing to use it", dir.display());
+        bail!(
+            "{} is owned by someone else, refusing to use it",
+            dir.display()
+        );
     }
     if meta.mode() & 0o077 != 0 {
         std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
@@ -50,9 +56,7 @@ pub fn private_dir(dir: &Path) -> Result<PathBuf> {
 
 fn owned_file(path: &Path) -> Option<std::fs::Metadata> {
     let meta = std::fs::symlink_metadata(path).ok()?;
-    (meta.file_type().is_file()
-        && meta.uid() == crate::sys::euid()
-        && meta.mode() & 0o022 == 0)
+    (meta.file_type().is_file() && meta.uid() == crate::sys::euid() && meta.mode() & 0o022 == 0)
         .then_some(meta)
 }
 

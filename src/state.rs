@@ -68,7 +68,10 @@ mod tests {
             },
         );
         s.save_to(&p).unwrap();
-        assert_eq!(std::fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(
+            std::fs::metadata(&p).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
         let back = State::load_from(&p);
         assert_eq!(back.find("com.spotify.Client").unwrap().0, "spotify");
         assert!(back.find("nope").is_none());

@@ -195,9 +195,8 @@ pub fn find_installed(name: &str) -> Option<String> {
     out.lines().find_map(|l| {
         let (id, n) = l.split_once('\t')?;
         let id = id.trim();
-        (valid_id(id)
-            && (id.eq_ignore_ascii_case(name) || norm(n) == key || id_matches(id, &key)))
-        .then(|| id.to_string())
+        (valid_id(id) && (id.eq_ignore_ascii_case(name) || norm(n) == key || id_matches(id, &key)))
+            .then(|| id.to_string())
     })
 }
 

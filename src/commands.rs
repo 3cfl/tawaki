@@ -268,7 +268,11 @@ pub fn remove(_cfg: &Config, names: &[String], yes: bool) -> Result<()> {
         bail!("not installed: {}", missing.join(", "));
     }
     for (_, e) in &targets {
-        println!("  {} {}", ui::source_tag(e.source), ui::bold(&ui::clean(&e.id)));
+        println!(
+            "  {} {}",
+            ui::source_tag(e.source),
+            ui::bold(&ui::clean(&e.id))
+        );
     }
     if !yes && !ui::confirm("Remove these?", true) {
         bail!("cancelled");
@@ -555,7 +559,10 @@ pub fn search(cfg: &Config, query: &[String], from: Option<Source>, json: bool) 
         for c in hits.iter().take(SEARCH_LIMIT) {
             let mut line = format!("{} {}", ui::source_tag(src), describe(c));
             if src == Source::Flatpak {
-                line.push_str(&format!(" {}", ui::dim(&format!("({})", ui::clean(&c.name)))));
+                line.push_str(&format!(
+                    " {}",
+                    ui::dim(&format!("({})", ui::clean(&c.name)))
+                ));
             }
             if c.installed {
                 line.push_str(&format!(" {}", ui::cyan("[installed]")));
@@ -607,7 +614,11 @@ pub fn list(from: Option<Source>, json: bool) -> Result<()> {
         } else {
             String::new()
         };
-        println!("{} {}{id}", ui::source_tag(r.source), ui::bold(&ui::clean(r.name)));
+        println!(
+            "{} {}{id}",
+            ui::source_tag(r.source),
+            ui::bold(&ui::clean(r.name))
+        );
     }
     if rows.is_empty() {
         ui::info("Nothing installed with tawaki yet.");

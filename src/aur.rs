@@ -107,7 +107,9 @@ pub fn cache_key(term: &str) -> String {
 }
 
 fn cached_search(term: &str) -> Option<Resp> {
-    let path = fsx::cache_sub("search").ok().map(|d| d.join(cache_key(term)));
+    let path = fsx::cache_sub("search")
+        .ok()
+        .map(|d| d.join(cache_key(term)));
     if let Some(p) = path.as_ref().filter(|p| fsx::fresh(p, SEARCH_TTL)) {
         if let Some(r) = fsx::read_limited(p, MAX_CACHE).and_then(|b| parse_resp(&b)) {
             return Some(r);
@@ -320,7 +322,11 @@ fn fetch(name: &str, dir: &Path) -> Result<()> {
     }
     std::fs::remove_dir_all(dir).with_context(|| format!("couldn't clear {}", dir.display()))?;
     fsx::private_dir(dir)?;
-    sys::run("git", ["clone", "-q", "--", &url, &dir.to_string_lossy()], None)?;
+    sys::run(
+        "git",
+        ["clone", "-q", "--", &url, &dir.to_string_lossy()],
+        None,
+    )?;
     let origin = git(dir, &["config", "--get", "remote.origin.url"]).unwrap_or_default();
     if origin.trim() != url {
         bail!("{name}: clone source mismatch");
@@ -344,8 +350,13 @@ pub fn pager_argv(pager: Option<&str>) -> Vec<String> {
 fn review_text(name: &str, dir: &Path, since: Option<&str>) -> String {
     let mut text = String::new();
     if let Some(old) = since {
-        if let Some(diff) = git(dir, &["--no-pager", "diff", "--no-color", old, "HEAD", "--"]) {
-            text.push_str(&format!("Changes to {name} since you last reviewed it:\n\n"));
+        if let Some(diff) = git(
+            dir,
+            &["--no-pager", "diff", "--no-color", old, "HEAD", "--"],
+        ) {
+            text.push_str(&format!(
+                "Changes to {name} since you last reviewed it:\n\n"
+            ));
             text.push_str(&diff);
             return ui::clean_block(&text);
         }
@@ -358,7 +369,11 @@ fn review_text(name: &str, dir: &Path, since: Option<&str>) -> String {
         .collect();
     let mut order: Vec<&String> = files.iter().filter(|f| *f == "PKGBUILD").collect();
     order.extend(files.iter().filter(|f| f.ends_with(".install")));
-    order.extend(files.iter().filter(|f| *f != "PKGBUILD" && !f.ends_with(".install")));
+    order.extend(
+        files
+            .iter()
+            .filter(|f| *f != "PKGBUILD" && !f.ends_with(".install")),
+    );
     text.push_str(&format!("Files in {name}:\n"));
     for f in &files {
         text.push_str(&format!("  {f}\n"));
@@ -395,15 +410,16 @@ fn page(text: &str) {
                 return;
             }
         }
-        Err(_) => ui::warn(&format!("couldn't start pager {}, printing instead", argv[0])),
+        Err(_) => ui::warn(&format!(
+            "couldn't start pager {}, printing instead",
+            argv[0]
+        )),
     }
     println!("{text}");
 }
 
 fn reviewed_path(name: &str) -> Option<PathBuf> {
-    fsx::cache_sub("aur-reviewed")
-        .ok()
-        .map(|d| d.join(name))
+    fsx::cache_sub("aur-reviewed").ok().map(|d| d.join(name))
 }
 
 fn build_one(name: &str, yes: bool) -> Result<()> {
@@ -527,7 +543,14 @@ mod tests {
 
     #[test]
     fn aur_name_grammar() {
-        for ok in ["paru", "paru-bin", "visual-studio-code-bin", "python-foo.bar", "0ad", "g++"] {
+        for ok in [
+            "paru",
+            "paru-bin",
+            "visual-studio-code-bin",
+            "python-foo.bar",
+            "0ad",
+            "g++",
+        ] {
             assert!(valid_name(ok), "{ok}");
         }
         for bad in [
@@ -553,15 +576,18 @@ mod tests {
     #[test]
     fn pick_prefers_bin_then_fresh() {
         let mut info = HashMap::new();
-        for p in [pkg("foo", "1", false), pkg("foo-bin", "1", true), pkg("foo-git", "1", false)] {
+        for p in [
+            pkg("foo", "1", false),
+            pkg("foo-bin", "1", true),
+            pkg("foo-git", "1", false),
+        ] {
             info.insert(p.name.clone(), p);
         }
         assert_eq!(pick(&info, "foo").unwrap().name, "foo");
         info.get_mut("foo-bin").unwrap().out_of_date = None;
         assert_eq!(pick(&info, "foo").unwrap().name, "foo-bin");
         assert!(pick(&info, "bar").is_none());
-        let only_stale: HashMap<String, Pkg> =
-            [("baz".to_string(), pkg("baz", "1", true))].into();
+        let only_stale: HashMap<String, Pkg> = [("baz".to_string(), pkg("baz", "1", true))].into();
         assert_eq!(pick(&only_stale, "baz").unwrap().name, "baz");
     }
 
@@ -592,7 +618,12 @@ mod tests {
         let a = cache_key("a?b");
         let b = cache_key("a_b");
         assert_ne!(a, b);
-        for k in [cache_key("../../etc/passwd"), cache_key(&"x".repeat(5000)), a, b] {
+        for k in [
+            cache_key("../../etc/passwd"),
+            cache_key(&"x".repeat(5000)),
+            a,
+            b,
+        ] {
             assert!(!k.contains('/'));
             assert!(!k.starts_with('.'));
             assert!(k.len() < 100);
@@ -644,7 +675,10 @@ mod tests {
         assert_eq!(pager_argv(None), ["less"]);
         assert_eq!(pager_argv(Some("  ")), ["less"]);
         assert_eq!(pager_argv(Some("less -R")), ["less", "-R"]);
-        assert_eq!(pager_argv(Some("less; rm -rf ~")), ["less;", "rm", "-rf", "~"]);
+        assert_eq!(
+            pager_argv(Some("less; rm -rf ~")),
+            ["less;", "rm", "-rf", "~"]
+        );
     }
 
     #[test]

@@ -9,7 +9,11 @@ pub const ROOT_ALLOWED: [&str; 3] = ["/usr/bin/pacman", "/usr/bin/rm", "/usr/bin
 
 pub fn clean_path(path: Option<&OsStr>) -> OsString {
     let dirs: Vec<PathBuf> = path
-        .map(|p| std::env::split_paths(p).filter(|d| d.is_absolute()).collect())
+        .map(|p| {
+            std::env::split_paths(p)
+                .filter(|d| d.is_absolute())
+                .collect()
+        })
         .unwrap_or_default();
     let dirs = if dirs.is_empty() {
         vec![PathBuf::from("/usr/local/bin"), PathBuf::from("/usr/bin")]

@@ -59,7 +59,7 @@ jobs:
           tawaki-new completions bash | head -3
       - run: |
           set -euo pipefail
-          hyperfine -i -w 2 -r 10 --export-markdown warm.md \
+          hyperfine -S default -i -w 2 -r 10 --export-markdown warm.md \
             -n 'search old' 'tawaki-old search firefox' \
             -n 'search new' 'tawaki-new search firefox' \
             -n 'search pacman old' 'tawaki-old search --from pacman linux' \
@@ -68,7 +68,7 @@ jobs:
             -n 'install lookup new' 'yes n | tawaki-new install firefox obs-studio paru spotify' \
             -n 'list old' 'tawaki-old list' \
             -n 'list new' 'tawaki-new list'
-          hyperfine -i -r 5 --export-markdown cold.md \
+          hyperfine -S default -i -r 5 --export-markdown cold.md \
             --prepare 'rm -rf "$HOME/.cache/tawaki"' \
             -n 'search cold old' 'tawaki-old search firefox' \
             -n 'search cold new' 'tawaki-new search firefox' \

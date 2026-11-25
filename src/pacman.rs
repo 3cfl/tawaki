@@ -196,7 +196,9 @@ fn alpm_busy() -> bool {
         return true;
     };
     procs.flatten().any(|p| {
-        p.file_name().to_str().is_some_and(|n| n.bytes().all(|b| b.is_ascii_digit()))
+        p.file_name()
+            .to_str()
+            .is_some_and(|n| n.bytes().all(|b| b.is_ascii_digit()))
             && std::fs::read_to_string(p.path().join("comm"))
                 .is_ok_and(|c| ALPM_USERS.contains(&c.trim()))
     })
@@ -245,10 +247,7 @@ pub fn stable() -> bool {
 }
 
 pub fn shared_dir_ok(meta: &std::fs::Metadata, uid: u32) -> bool {
-    !meta.file_type().is_symlink()
-        && meta.is_dir()
-        && meta.uid() == uid
-        && meta.mode() & 0o022 == 0
+    !meta.file_type().is_symlink() && meta.is_dir() && meta.uid() == uid && meta.mode() & 0o022 == 0
 }
 
 fn checkup_db() -> Option<PathBuf> {
@@ -331,10 +330,7 @@ pub fn sig_target_ok(file_name: &str, sync_dir: &Path) -> bool {
     let Some(db) = file_name.strip_suffix(".sig") else {
         return false;
     };
-    let Some(repo) = db
-        .strip_suffix(".db")
-        .or_else(|| db.strip_suffix(".files"))
-    else {
+    let Some(repo) = db.strip_suffix(".db").or_else(|| db.strip_suffix(".files")) else {
         return false;
     };
     !repo.is_empty()
@@ -358,8 +354,7 @@ pub fn bad_sigs_in(sync_dir: &Path, owner: u32) -> Vec<PathBuf> {
         })
         .map(|e| e.path())
         .filter(|p| {
-            std::fs::symlink_metadata(p)
-                .is_ok_and(|m| m.file_type().is_file() && m.uid() == owner)
+            std::fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_file() && m.uid() == owner)
         })
         .filter(|p| {
             let mut head = [0u8; 512];
@@ -475,13 +470,20 @@ pub fn closure_of(descs: &[Desc], roots: &[&str]) -> HashSet<String> {
     }
     let by_name: HashMap<&str, &Desc> = descs.iter().map(|d| (d.name.as_str(), d)).collect();
     let mut seen = HashSet::new();
-    let mut todo: Vec<&str> = roots.iter().filter_map(|r| provider.get(r).copied()).collect();
+    let mut todo: Vec<&str> = roots
+        .iter()
+        .filter_map(|r| provider.get(r).copied())
+        .collect();
     while let Some(n) = todo.pop() {
         if !seen.insert(n.to_string()) {
             continue;
         }
         if let Some(d) = by_name.get(n) {
-            todo.extend(d.depends.iter().filter_map(|x| provider.get(x.as_str()).copied()));
+            todo.extend(
+                d.depends
+                    .iter()
+                    .filter_map(|x| provider.get(x.as_str()).copied()),
+            );
         }
     }
     seen
@@ -504,7 +506,15 @@ mod tests {
 
     #[test]
     fn names_follow_arch_grammar() {
-        for ok in ["firefox", "lib32-glibc", "gtk+", "python3.12", "@foo", "a_b", "core/linux"] {
+        for ok in [
+            "firefox",
+            "lib32-glibc",
+            "gtk+",
+            "python3.12",
+            "@foo",
+            "a_b",
+            "core/linux",
+        ] {
             assert!(valid_name(ok, true), "{ok}");
         }
         for bad in [
@@ -540,12 +550,18 @@ mod tests {
 
     #[test]
     fn local_entry_split() {
-        assert_eq!(split_local_entry("firefox-120.0-1"), Some(("firefox", "120.0-1")));
+        assert_eq!(
+            split_local_entry("firefox-120.0-1"),
+            Some(("firefox", "120.0-1"))
+        );
         assert_eq!(
             split_local_entry("lib32-glibc-2.40+r16-1.1"),
             Some(("lib32-glibc", "2.40+r16-1.1"))
         );
-        assert_eq!(split_local_entry("python-1:3.12-2"), Some(("python", "1:3.12-2")));
+        assert_eq!(
+            split_local_entry("python-1:3.12-2"),
+            Some(("python", "1:3.12-2"))
+        );
         assert_eq!(split_local_entry("ALPM_DB_VERSION"), None);
         assert_eq!(split_local_entry("x-1"), None);
         assert_eq!(split_local_entry("-1-2"), None);
@@ -654,7 +670,10 @@ mod tests {
         let d = "%NAME%\nbubblewrap\n\n%DEPENDS%\nglibc\n";
         let e = "%NAME%\nglibc\n\n";
         let f = "%NAME%\nfirefox\n\n%DEPENDS%\ngtk3\n";
-        let descs: Vec<Desc> = [a, b, c, d, e, f].iter().filter_map(|t| parse_desc(t)).collect();
+        let descs: Vec<Desc> = [a, b, c, d, e, f]
+            .iter()
+            .filter_map(|t| parse_desc(t))
+            .collect();
         assert_eq!(descs[0].depends, ["ostree", "libostree-1.so", "bubblewrap"]);
         let cl = closure_of(&descs, &["flatpak"]);
         let mut v: Vec<&str> = cl.iter().map(String::as_str).collect();
