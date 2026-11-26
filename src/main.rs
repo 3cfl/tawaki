@@ -65,10 +65,12 @@ enum Cmd {
         #[arg(long, help = "Print machine-readable JSON")]
         json: bool,
     },
-    #[command(visible_alias = "ls", about = "List packages installed with tawaki")]
+    #[command(visible_alias = "ls", about = "List installed packages from every source")]
     List {
         #[arg(long, value_enum, help = "Only show one source")]
         from: Option<Source>,
+        #[arg(long, help = "Only show packages installed with tawaki")]
+        mine: bool,
         #[arg(long, help = "Print machine-readable JSON")]
         json: bool,
     },
@@ -80,6 +82,7 @@ enum Cmd {
 }
 
 fn main() {
+    sys::reset_sigpipe();
     let cli = Cli::parse();
     if let Cmd::Completions { shell } = cli.cmd {
         clap_complete::generate(shell, &mut Cli::command(), "tawaki", &mut std::io::stdout());
@@ -98,7 +101,7 @@ fn main() {
         Cmd::Update { yes } => commands::update(&cfg, yes),
         Cmd::Check { json } => commands::check(&cfg, json),
         Cmd::Search { query, from, json } => commands::search(&cfg, &query, from, json),
-        Cmd::List { from, json } => commands::list(from, json),
+        Cmd::List { from, mine, json } => commands::list(from, mine, json),
         Cmd::Completions { .. } => Ok(()),
     };
     if let Err(e) = result {

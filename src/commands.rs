@@ -1,7 +1,7 @@
 use crate::config::Config;
 use crate::source::{norm, Candidate, Outdated, Source};
 use crate::state::{Entry, State};
-use crate::{aur, flatpak, pacman, ui};
+use crate::{aur, flatpak, pacman, sys, ui};
 use anyhow::{bail, Result};
 use std::collections::{BTreeMap, HashSet};
 
@@ -585,24 +585,119 @@ pub fn search(cfg: &Config, query: &[String], from: Option<Source>, json: bool) 
     Ok(())
 }
 
-#[derive(serde::Serialize)]
-struct Listed<'a> {
-    name: &'a str,
+#[derive(serde::Serialize, Debug, PartialEq)]
+struct Listed {
+    name: String,
     source: Source,
-    id: &'a str,
+    id: String,
+    version: String,
+    tawaki: bool,
 }
 
-pub fn list(from: Option<Source>, json: bool) -> Result<()> {
-    let state = State::load();
-    let rows: Vec<Listed> = state
-        .packages
-        .iter()
-        .filter(|(_, e)| from.is_none_or(|f| f == e.source))
-        .map(|(name, e)| Listed {
-            name,
-            source: e.source,
-            id: &e.id,
+fn parse_pairs(out: &str) -> Vec<(String, String)> {
+    out.lines()
+        .filter_map(|l| {
+            let (n, v) = l.split_once(' ')?;
+            Some((n.to_string(), v.trim().to_string()))
         })
+        .collect()
+}
+
+fn parse_flatpak_list(out: &str) -> Vec<(String, String, String)> {
+    out.lines()
+        .filter_map(|l| {
+            let mut it = l.split('\t');
+            let id = it.next()?.trim().to_string();
+            let name = it.next().unwrap_or("").trim().to_string();
+            let ver = it.next().unwrap_or("").trim().to_string();
+            (!id.is_empty()).then_some((id, name, ver))
+        })
+        .collect()
+}
+
+fn gather(
+    explicit: &[(String, String)],
+    foreign: &[(String, String)],
+    flatpaks: &[(String, String, String)],
+    state: &State,
+) -> Vec<Listed> {
+    let aur: HashSet<&str> = foreign.iter().map(|(n, _)| n.as_str()).collect();
+    let mine = |src: Source, name: &str, id: &str| {
+        state
+            .packages
+            .iter()
+            .any(|(k, e)| e.source == src && (k == name || e.id == id))
+    };
+    let mut rows = Vec::new();
+    for (n, v) in explicit.iter().filter(|(n, _)| !aur.contains(n.as_str())) {
+        rows.push(Listed {
+            name: n.clone(),
+            source: Source::Pacman,
+            id: n.clone(),
+            version: v.clone(),
+            tawaki: mine(Source::Pacman, n, n),
+        });
+    }
+    for (n, v) in foreign {
+        rows.push(Listed {
+            name: n.clone(),
+            source: Source::Aur,
+            id: n.clone(),
+            version: v.clone(),
+            tawaki: mine(Source::Aur, n, n),
+        });
+    }
+    for (id, n, v) in flatpaks {
+        let name = if n.is_empty() { id.clone() } else { n.clone() };
+        rows.push(Listed {
+            tawaki: mine(Source::Flatpak, &name, id),
+            name,
+            source: Source::Flatpak,
+            id: id.clone(),
+            version: v.clone(),
+        });
+    }
+    for (k, e) in &state.packages {
+        if !rows.iter().any(|r| r.source == e.source && (r.name == *k || r.id == e.id)) {
+            rows.push(Listed {
+                name: k.clone(),
+                source: e.source,
+                id: e.id.clone(),
+                version: String::new(),
+                tawaki: true,
+            });
+        }
+    }
+    rows
+}
+
+pub fn list(from: Option<Source>, mine: bool, json: bool) -> Result<()> {
+    let state = State::load();
+    let want = |s: Source| from.is_none_or(|f| f == s);
+    let explicit = if want(Source::Pacman) {
+        parse_pairs(&sys::output("pacman", ["-Qe"]).unwrap_or_default())
+    } else {
+        Vec::new()
+    };
+    let foreign = if want(Source::Pacman) || want(Source::Aur) {
+        pacman::foreign_versions()
+    } else {
+        Vec::new()
+    };
+    let flatpaks = if want(Source::Flatpak) && flatpak::available() {
+        parse_flatpak_list(
+            &sys::output(
+                "flatpak",
+                ["list", "--app", "--columns=application,name,version"],
+            )
+            .unwrap_or_default(),
+        )
+    } else {
+        Vec::new()
+    };
+    let rows: Vec<Listed> = gather(&explicit, &foreign, &flatpaks, &state)
+        .into_iter()
+        .filter(|r| want(r.source) && (!mine || r.tawaki))
         .collect();
     if json {
         println!("{}", serde_json::to_string(&rows)?);
@@ -610,18 +705,32 @@ pub fn list(from: Option<Source>, json: bool) -> Result<()> {
     }
     for r in &rows {
         let id = if r.id != r.name {
-            ui::dim(&format!(" ({})", ui::clean(r.id)))
+            ui::dim(&format!(" ({})", ui::clean(&r.id)))
+        } else {
+            String::new()
+        };
+        let ver = if r.version.is_empty() {
+            String::new()
+        } else {
+            format!(" {}", ui::green(&ui::clean(&r.version)))
+        };
+        let tag = if r.tawaki && !mine {
+            ui::dim(" via tawaki")
         } else {
             String::new()
         };
         println!(
-            "{} {}{id}",
+            "{} {}{ver}{id}{tag}",
             ui::source_tag(r.source),
-            ui::bold(&ui::clean(r.name))
+            ui::bold(&ui::clean(&r.name))
         );
     }
     if rows.is_empty() {
-        ui::info("Nothing installed with tawaki yet.");
+        ui::info(if mine {
+            "Nothing installed with tawaki yet."
+        } else {
+            "Nothing installed."
+        });
     }
     Ok(())
 }
@@ -629,6 +738,34 @@ pub fn list(from: Option<Source>, json: bool) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn list_gathers_every_source_without_duplicates() {
+        let explicit = parse_pairs("firefox 140.0-1\nyay 12.0-1\n");
+        let foreign = parse_pairs("yay 12.0-1\n");
+        let flat = parse_flatpak_list("org.gimp.GIMP\tGIMP\t3.0\n\n");
+        let mut state = State::default();
+        state.packages.insert(
+            "GIMP".into(),
+            crate::state::Entry { source: Source::Flatpak, id: "org.gimp.GIMP".into() },
+        );
+        state.packages.insert(
+            "gone".into(),
+            crate::state::Entry { source: Source::Pacman, id: "gone".into() },
+        );
+        let rows = gather(&explicit, &foreign, &flat, &state);
+        let seen: Vec<(&str, Source, bool)> =
+            rows.iter().map(|r| (r.name.as_str(), r.source, r.tawaki)).collect();
+        assert_eq!(
+            seen,
+            [
+                ("firefox", Source::Pacman, false),
+                ("yay", Source::Aur, false),
+                ("GIMP", Source::Flatpak, true),
+                ("gone", Source::Pacman, true),
+            ]
+        );
+    }
 
     fn up(name: &str) -> Outdated {
         Outdated {

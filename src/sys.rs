@@ -34,6 +34,16 @@ pub fn command(cmd: &str) -> Command {
     c
 }
 
+extern "C" {
+    fn signal(sig: i32, handler: usize) -> usize;
+}
+
+pub fn reset_sigpipe() {
+    unsafe {
+        signal(13, 0);
+    }
+}
+
 pub fn output<I, S>(cmd: &str, args: I) -> Option<String>
 where
     I: IntoIterator<Item = S>,

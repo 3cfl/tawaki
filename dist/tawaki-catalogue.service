@@ -3,9 +3,13 @@ Description=Refresh the Flathub catalogue for tawaki
 Wants=network-online.target
 After=network-online.target
 ConditionPathExists=/usr/bin/flatpak
+StartLimitIntervalSec=30min
+StartLimitBurst=6
 
 [Service]
 Type=oneshot
+Restart=on-failure
+RestartSec=2min
 Nice=19
 IOSchedulingClass=idle
 ExecStart=/usr/bin/flatpak remote-add --system --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
