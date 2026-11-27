@@ -6,7 +6,6 @@ use std::io::Read;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
-use std::time::SystemTime;
 
 pub const PACMAN: &str = "/usr/bin/pacman";
 const RM: &str = "/usr/bin/rm";
@@ -14,7 +13,6 @@ const LOCAL_DB: &str = "/var/lib/pacman/local";
 const SYNC_DB: &str = "/var/lib/pacman/sync";
 const LOCK: &str = "/var/lib/pacman/db.lck";
 const NAME_MAX: usize = 255;
-const ALPM_USERS: [&str; 3] = ["pacman", "pamac-daemon", "packagekitd"];
 
 pub fn split_local_entry(dir: &str) -> Option<(&str, &str)> {
     let rel = dir.rfind('-')?;
@@ -180,44 +178,14 @@ pub fn foreign() -> HashSet<String> {
     foreign_versions().into_iter().map(|(n, _)| n).collect()
 }
 
-fn boot_time() -> Option<SystemTime> {
-    let stat = std::fs::read_to_string("/proc/stat").ok()?;
-    let secs: u64 = stat
-        .lines()
-        .find_map(|l| l.strip_prefix("btime "))?
-        .trim()
-        .parse()
-        .ok()?;
-    SystemTime::UNIX_EPOCH.checked_add(std::time::Duration::from_secs(secs))
-}
-
-fn alpm_busy() -> bool {
-    let Ok(procs) = std::fs::read_dir("/proc") else {
-        return true;
-    };
-    procs.flatten().any(|p| {
-        p.file_name()
-            .to_str()
-            .is_some_and(|n| n.bytes().all(|b| b.is_ascii_digit()))
-            && std::fs::read_to_string(p.path().join("comm"))
-                .is_ok_and(|c| ALPM_USERS.contains(&c.trim()))
-    })
-}
-
-pub fn lock_is_stale(mtime: Option<SystemTime>, boot: Option<SystemTime>, busy: bool) -> bool {
-    let before_boot = matches!((mtime, boot), (Some(m), Some(b)) if m < b);
-    before_boot || !busy
-}
-
-pub fn clear_stale_lock() -> Result<()> {
-    let Ok(meta) = std::fs::symlink_metadata(LOCK) else {
-        return Ok(());
-    };
-    if !lock_is_stale(meta.modified().ok(), boot_time(), alpm_busy()) {
-        return Ok(());
+pub fn require_unlocked() -> Result<()> {
+    match std::fs::symlink_metadata(LOCK) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.into()),
+        Ok(_) => anyhow::bail!(
+            "package database is locked; finish the active transaction before retrying"
+        ),
     }
-    eprintln!("  removing a stale pacman lock left by an interrupted update");
-    sys::run_root(RM, &["-f", "--", LOCK])
 }
 
 pub fn install(names: &[String], yes: bool) -> Result<()> {
@@ -502,7 +470,6 @@ pub fn runtime_closure(roots: &[&str]) -> Option<HashSet<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
 
     #[test]
     fn names_follow_arch_grammar() {
@@ -602,18 +569,6 @@ mod tests {
         assert_eq!(names, ["bash", "gcc"]);
         assert_eq!(r[0].old, "5.3-1");
         assert_eq!(r[0].new, "5.2-1");
-    }
-
-    #[test]
-    fn stale_lock_rules() {
-        let boot = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
-        let before = Some(boot - Duration::from_secs(10));
-        let after = Some(boot + Duration::from_secs(10));
-        assert!(lock_is_stale(before, Some(boot), true));
-        assert!(!lock_is_stale(after, Some(boot), true));
-        assert!(lock_is_stale(after, Some(boot), false));
-        assert!(!lock_is_stale(None, None, true));
-        assert!(!lock_is_stale(after, None, true));
     }
 
     #[test]

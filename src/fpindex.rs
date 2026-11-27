@@ -77,23 +77,6 @@ pub fn installed_ids() -> HashSet<String> {
         .collect()
 }
 
-fn fetch_catalogue() {
-    if !crate::sys::has("flatpak") {
-        return;
-    }
-    eprintln!("  fetching the Flathub catalogue (first run only)…");
-    crate::sys::succeeds(
-        "flatpak",
-        ["update", "--appstream", "--system", "--noninteractive"],
-    );
-    if sources().is_empty() {
-        let args = ["update", "--appstream", "--system", "--noninteractive"];
-        if let Ok(argv) = crate::sys::root_argv("/usr/bin/flatpak", &args, crate::sys::euid()) {
-            crate::sys::succeeds(&argv[0], &argv[1..]);
-        }
-    }
-}
-
 fn read_cache(path: &Path, key: &[String]) -> Option<Vec<App>> {
     let idx: Index = serde_json::from_slice(&fsx::read_limited(path, MAX_INDEX)?).ok()?;
     (idx.key == key).then(|| idx.apps.into_iter().filter(sane).collect())
@@ -105,26 +88,32 @@ pub fn load() -> &'static [App] {
 }
 
 fn build() -> Vec<App> {
-    let mut srcs = sources();
-    if srcs.is_empty() {
-        fetch_catalogue();
-        srcs = sources();
-    }
+    let srcs = sources();
     let key: Vec<String> = srcs.iter().map(|(n, _, c)| format!("{n}={c}")).collect();
     let path = cache_path();
     if let Some(apps) = path.as_deref().and_then(|p| read_cache(p, &key)) {
         return apps;
     }
-    let apps: Vec<App> = std::thread::scope(|s| {
+    let parsed = std::thread::scope(|s| {
         let hs: Vec<_> = srcs
             .iter()
             .map(|(name, xml, _)| s.spawn(move || parse(xml, name)))
             .collect();
         hs.into_iter()
-            .flat_map(|h| h.join().unwrap_or_default())
-            .filter(sane)
-            .collect()
+            .map(|h| h.join().ok().flatten())
+            .collect::<Vec<_>>()
     });
+    let complete = parsed.iter().all(Option::is_some);
+    let apps = parsed
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(sane)
+        .collect();
+    if !complete {
+        eprintln!("Some Flatpak catalogues could not be read. Refresh AppStream and retry.");
+        return apps;
+    }
     let idx = Index { key, apps };
     if let (Some(p), Ok(bytes)) = (path, serde_json::to_vec(&idx)) {
         let _ = fsx::write_atomic(&p, &bytes);
@@ -137,10 +126,11 @@ fn has_lang(e: &BytesStart) -> bool {
 }
 
 fn attr(e: &BytesStart, key: &str) -> Option<String> {
-    e.try_get_attribute(key)
-        .ok()
-        .flatten()
-        .and_then(|a| a.unescape_value().ok().map(|v| v.into_owned()))
+    e.try_get_attribute(key).ok().flatten().and_then(|a| {
+        a.decoded_and_normalized_value(quick_xml::XmlVersion::Implicit1_0, e.decoder())
+            .ok()
+            .map(|v| v.into_owned())
+    })
 }
 
 #[derive(PartialEq)]
@@ -153,12 +143,10 @@ enum Field {
     Bundle,
 }
 
-pub fn parse(path: &Path, remote: &str) -> Vec<App> {
-    let Ok(file) = std::fs::File::open(path) else {
-        return vec![];
-    };
+fn parse(path: &Path, remote: &str) -> Option<Vec<App>> {
+    let file = std::fs::File::open(path).ok()?;
     let mut reader = Reader::from_reader(BufReader::with_capacity(1 << 20, file));
-    reader.config_mut().trim_text(true);
+    let mut value = String::new();
     let mut buf = Vec::new();
     let mut apps = vec![];
     let mut cur: Option<App> = None;
@@ -168,9 +156,11 @@ pub fn parse(path: &Path, remote: &str) -> Vec<App> {
     let mut field = Field::None;
     let mut got_release = false;
 
-    while let Ok(ev) = reader.read_event_into(&mut buf) {
+    loop {
+        let ev = reader.read_event_into(&mut buf).ok()?;
         match ev {
             Event::Start(e) => {
+                value.clear();
                 depth += 1;
                 let tag = e.name();
                 let tag = tag.as_ref();
@@ -214,22 +204,27 @@ pub fn parse(path: &Path, remote: &str) -> Vec<App> {
                     }
                 }
             }
-            Event::Text(t) => {
-                if field != Field::None {
-                    if let (Some(app), Ok(text)) = (cur.as_mut(), t.unescape()) {
-                        let text = text.trim().to_string();
-                        match field {
-                            Field::Id => app.id = text,
-                            Field::Name => app.name = text,
-                            Field::Summary => app.summary = text,
-                            Field::Verified => app.verified = text == "true",
-                            Field::Bundle => bundle = text,
-                            Field::None => {}
-                        }
-                    }
+            Event::Text(t) if field != Field::None => value.push_str(&t.decode().ok()?),
+            Event::CData(t) if field != Field::None => value.push_str(&t.decode().ok()?),
+            Event::GeneralRef(r) if field != Field::None => {
+                if let Some(c) = r.resolve_char_ref().ok()? {
+                    value.push(c);
+                } else {
+                    value.push_str(quick_xml::escape::resolve_xml_entity(&r.decode().ok()?)?);
                 }
             }
             Event::End(e) => {
+                if let Some(app) = cur.as_mut() {
+                    let text = value.trim();
+                    match field {
+                        Field::Id => app.id = text.to_owned(),
+                        Field::Name => app.name = text.to_owned(),
+                        Field::Summary => app.summary = text.to_owned(),
+                        Field::Verified => app.verified = text == "true",
+                        Field::Bundle => bundle = text.to_owned(),
+                        Field::None => {}
+                    }
+                }
                 field = Field::None;
                 if e.name().as_ref() == b"component" {
                     if let Some(mut app) = cur.take() {
@@ -251,7 +246,7 @@ pub fn parse(path: &Path, remote: &str) -> Vec<App> {
         }
         buf.clear();
     }
-    apps
+    (depth == 0).then_some(apps)
 }
 
 #[cfg(test)]
@@ -264,7 +259,7 @@ mod tests {
     <id>org.mozilla.firefox.desktop</id>
     <name>Firefox</name>
     <name xml:lang="de">Feuerfuchs</name>
-    <summary>Fast, private browser</summary>
+    <summary>Fast &amp; private &#98;rowser</summary>
     <releases><release version="133.0" timestamp="1"/><release version="132.0"/></releases>
     <bundle type="flatpak">app/org.mozilla.firefox/x86_64/stable</bundle>
     <metadata><value key="flathub::verification::verified">true</value></metadata>
@@ -286,13 +281,16 @@ mod tests {
         let d = fsx::test_dir("as");
         let p = d.join("appstream.xml");
         std::fs::write(&p, XML).unwrap();
-        let apps = parse(&p, "flathub");
+        let apps = parse(&p, "flathub").unwrap();
         assert_eq!(apps.len(), 2);
         let ff = &apps[0];
         assert_eq!(ff.id, "org.mozilla.firefox");
         assert_eq!(ff.name, "Firefox");
         assert_eq!(ff.version, "133.0");
         assert!(ff.verified);
+        assert_eq!(ff.summary, "Fast & private browser");
+        std::fs::write(&p, XML.trim_end().trim_end_matches("</components>")).unwrap();
+        assert!(parse(&p, "flathub").is_none());
         let sane_apps: Vec<&App> = apps.iter().filter(|a| sane(a)).collect();
         assert_eq!(sane_apps.len(), 1);
     }

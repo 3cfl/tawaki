@@ -65,7 +65,10 @@ enum Cmd {
         #[arg(long, help = "Print machine-readable JSON")]
         json: bool,
     },
-    #[command(visible_alias = "ls", about = "List installed packages from every source")]
+    #[command(
+        visible_alias = "ls",
+        about = "List installed packages from every source"
+    )]
     List {
         #[arg(long, value_enum, help = "Only show one source")]
         from: Option<Source>,

@@ -206,7 +206,7 @@ pub fn install(cfg: &Config, names: &[String], from: Option<Source>, yes: bool) 
         by_src.entry(key).or_default().push((name, c));
     }
     if by_src.keys().any(|(r, _)| *r != 1) {
-        pacman::clear_stale_lock()?;
+        pacman::require_unlocked()?;
     }
     for ((rank, remote), group) in by_src {
         let ids: Vec<String> = group.iter().map(|(_, c)| c.id.clone()).collect();
@@ -431,10 +431,12 @@ pub fn update(cfg: &Config, yes: bool) -> Result<()> {
     if !yes && !ui::confirm("Update now?", true) {
         bail!("cancelled");
     }
-    pacman::clear_stale_lock()?;
     let run_pacman = p != Some(0);
     let run_aur = a.is_some_and(|n| n > 0);
     let run_flatpak = f.is_some_and(|n| n > 0);
+    if run_pacman || run_aur {
+        pacman::require_unlocked()?;
+    }
     let overlap = run_pacman
         && run_flatpak
         && pend.flatpak_user > 0
@@ -658,7 +660,10 @@ fn gather(
         });
     }
     for (k, e) in &state.packages {
-        if !rows.iter().any(|r| r.source == e.source && (r.name == *k || r.id == e.id)) {
+        if !rows
+            .iter()
+            .any(|r| r.source == e.source && (r.name == *k || r.id == e.id))
+        {
             rows.push(Listed {
                 name: k.clone(),
                 source: e.source,
@@ -747,15 +752,23 @@ mod tests {
         let mut state = State::default();
         state.packages.insert(
             "GIMP".into(),
-            crate::state::Entry { source: Source::Flatpak, id: "org.gimp.GIMP".into() },
+            crate::state::Entry {
+                source: Source::Flatpak,
+                id: "org.gimp.GIMP".into(),
+            },
         );
         state.packages.insert(
             "gone".into(),
-            crate::state::Entry { source: Source::Pacman, id: "gone".into() },
+            crate::state::Entry {
+                source: Source::Pacman,
+                id: "gone".into(),
+            },
         );
         let rows = gather(&explicit, &foreign, &flat, &state);
-        let seen: Vec<(&str, Source, bool)> =
-            rows.iter().map(|r| (r.name.as_str(), r.source, r.tawaki)).collect();
+        let seen: Vec<(&str, Source, bool)> = rows
+            .iter()
+            .map(|r| (r.name.as_str(), r.source, r.tawaki))
+            .collect();
         assert_eq!(
             seen,
             [
