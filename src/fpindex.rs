@@ -152,12 +152,26 @@ fn parse(path: &Path, remote: &str) -> Option<Vec<App>> {
     let mut cur: Option<App> = None;
     let mut bundle = String::new();
     let mut depth = 0usize;
+    let mut saw_catalogue = false;
     let mut comp_depth = 0usize;
     let mut field = Field::None;
     let mut got_release = false;
 
     loop {
         let ev = reader.read_event_into(&mut buf).ok()?;
+        if depth == 0 {
+            match &ev {
+                Event::Start(e) | Event::Empty(e) => {
+                    if saw_catalogue || e.name().as_ref() != b"components" {
+                        return None;
+                    }
+                    saw_catalogue = true;
+                }
+                Event::Text(t) if !t.decode().ok()?.trim().is_empty() => return None,
+                Event::GeneralRef(_) | Event::CData(_) => return None,
+                _ => {}
+            }
+        }
         match ev {
             Event::Start(e) => {
                 value.clear();
@@ -246,7 +260,7 @@ fn parse(path: &Path, remote: &str) -> Option<Vec<App>> {
         }
         buf.clear();
     }
-    (depth == 0).then_some(apps)
+    (saw_catalogue && depth == 0).then_some(apps)
 }
 
 #[cfg(test)]
@@ -291,6 +305,17 @@ mod tests {
         assert_eq!(ff.summary, "Fast & private browser");
         std::fs::write(&p, XML.trim_end().trim_end_matches("</components>")).unwrap();
         assert!(parse(&p, "flathub").is_none());
+        for invalid in [
+            "",
+            "<html/>",
+            "<components/>bad",
+            "<components/><components/>",
+        ] {
+            std::fs::write(&p, invalid).unwrap();
+            assert!(parse(&p, "flathub").is_none());
+        }
+        std::fs::write(&p, "<components/>").unwrap();
+        assert!(parse(&p, "flathub").unwrap().is_empty());
         let sane_apps: Vec<&App> = apps.iter().filter(|a| sane(a)).collect();
         assert_eq!(sane_apps.len(), 1);
     }
